@@ -26,4 +26,14 @@ describe("WORKS message extraction", () => {
 
     expect(getMessagePreviewData(message)).toBeNull();
   });
+
+  it("detects HTML attachments as sandboxed preview targets", () => {
+    const message = document.createElement("div");
+    message.className = "msg_wrap";
+    message.innerHTML = '<div class="attach"><em class="file_name">report.html</em></div>';
+
+    expect(getMessagePreviewData(message)?.files).toEqual([
+      expect.objectContaining({ fileName: "report.html", fileKind: "html" })
+    ]);
+  });
 });

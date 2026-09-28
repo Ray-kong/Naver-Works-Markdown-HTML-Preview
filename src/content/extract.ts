@@ -2,19 +2,29 @@ import { detectMarkdown } from "../render/detect-markdown";
 import { MAX_MESSAGE_CHARACTERS } from "../shared/limits";
 import { PREVIEW_TAG_NAME, TARGET_ATTRIBUTE, WORKS_SELECTORS } from "./selectors";
 
-export interface MarkdownFileTarget {
+export type PreviewFileKind = "markdown" | "html";
+
+export interface PreviewFileTarget {
   readonly fileName: string;
+  readonly fileKind: PreviewFileKind;
   readonly targetId: string;
 }
 
 export interface MessagePreviewData {
   readonly messageText?: string;
-  readonly files: readonly MarkdownFileTarget[];
+  readonly files: readonly PreviewFileTarget[];
 }
 
 let targetSequence = 0;
 
 export const isMarkdownFileName = (fileName: string): boolean => /\.(?:md|markdown)$/i.test(fileName.trim());
+export const isHtmlFileName = (fileName: string): boolean => /\.html?$/i.test(fileName.trim());
+
+export const fileKindFromName = (fileName: string): PreviewFileKind | undefined => {
+  if (isMarkdownFileName(fileName)) return "markdown";
+  if (isHtmlFileName(fileName)) return "html";
+  return undefined;
+};
 
 const BLOCK_ELEMENTS = new Set(["DIV", "P", "PRE", "BLOCKQUOTE", "LI"]);
 
@@ -78,24 +88,27 @@ const ensureTargetId = (fileWrap: HTMLElement): string => {
   return targetId;
 };
 
-export const extractMarkdownFiles = (message: Element): MarkdownFileTarget[] => {
-  const files: MarkdownFileTarget[] = [];
+export const extractPreviewFiles = (message: Element): PreviewFileTarget[] => {
+  const files: PreviewFileTarget[] = [];
   for (const fileWrap of message.querySelectorAll<HTMLElement>(WORKS_SELECTORS.fileWrap)) {
     if (fileWrap.closest(WORKS_SELECTORS.message) !== message) continue;
     const fileName = readFileName(fileWrap);
-    if (!isMarkdownFileName(fileName)) continue;
-    files.push({ fileName, targetId: ensureTargetId(fileWrap) });
+    const fileKind = fileKindFromName(fileName);
+    if (!fileKind) continue;
+    files.push({ fileName, fileKind, targetId: ensureTargetId(fileWrap) });
   }
   return files;
 };
 
+export const extractMarkdownFiles = extractPreviewFiles;
+
 export const getMessagePreviewData = (message: Element): MessagePreviewData | null => {
   const rawText = extractMessageText(message);
   const messageText = rawText.length <= MAX_MESSAGE_CHARACTERS && detectMarkdown(rawText) ? rawText : undefined;
-  const files = extractMarkdownFiles(message);
+  const files = extractPreviewFiles(message);
   if (!messageText && files.length === 0) return null;
   return { messageText, files };
 };
 
 export const previewDataKey = (data: MessagePreviewData): string =>
-  JSON.stringify([data.messageText ?? null, data.files.map(({ fileName, targetId }) => [fileName, targetId])]);
+  JSON.stringify([data.messageText ?? null, data.files.map(({ fileName, fileKind, targetId }) => [fileName, fileKind, targetId])]);

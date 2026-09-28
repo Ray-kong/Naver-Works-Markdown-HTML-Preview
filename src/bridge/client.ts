@@ -1,10 +1,11 @@
-import { FILE_TIMEOUT_MS } from "../shared/limits";
+import { FILE_TIMEOUT_MS, HTML_FILE_TIMEOUT_MS } from "../shared/limits";
 import {
   createFileContentRequest,
   createFileMetadataRequest,
   isFileContentResponse,
   isFileMetadataResponse,
   type BridgeErrorCode,
+  type FileKind,
   type FileContentSuccess,
   type FileMetadataSuccess
 } from "./protocol";
@@ -12,6 +13,7 @@ import {
 export interface FileContentResult {
   text: string;
   fileName: string;
+  fileKind: FileKind;
   cacheKey: string;
 }
 
@@ -36,10 +38,10 @@ function requestId(): string {
 }
 
 function toResult(response: FileContentSuccess): FileContentResult {
-  return { text: response.text, fileName: response.fileName, cacheKey: response.cacheKey };
+  return { text: response.text, fileName: response.fileName, fileKind: response.fileKind, cacheKey: response.cacheKey };
 }
 
-export function requestFileContent(targetId: string): Promise<FileContentResult> {
+export function requestFileContent(targetId: string, expectedKind: FileKind = "markdown"): Promise<FileContentResult> {
   const knownKey = targetCacheKeys.get(targetId);
   if (knownKey) {
     const cached = cache.get(knownKey);
@@ -74,7 +76,7 @@ export function requestFileContent(targetId: string): Promise<FileContentResult>
     const timer = window.setTimeout(() => {
       cleanup();
       reject(new FileBridgeError("timeout"));
-    }, FILE_TIMEOUT_MS);
+    }, expectedKind === "html" ? HTML_FILE_TIMEOUT_MS : FILE_TIMEOUT_MS);
 
     window.addEventListener("message", onMessage);
     window.postMessage(createFileContentRequest(id, targetId), window.location.origin);

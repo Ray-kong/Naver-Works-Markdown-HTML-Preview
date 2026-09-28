@@ -86,6 +86,24 @@ describe("main-world file validation", () => {
     expect(result.fileName).toBe("README.md");
   });
 
+  it("accepts HTML metadata with a separate larger preview limit", () => {
+    const html = metadata({
+      fileName: "보고서.html",
+      fileExtensionName: "보고서.html",
+      extras: {
+        filename: "%EB%B3%B4%EA%B3%A0%EC%84%9C.html",
+        filesize: 1_999_542,
+        resourcepath: "/download/%EB%B3%B4%EA%B3%A0%EC%84%9C.html"
+      }
+    });
+
+    const result = validateMetadata(html, target("보고서.html"));
+
+    expect(result.fileKind).toBe("html");
+    expect(result.fileName).toBe("보고서.html");
+    expect(result.url.pathname).toBe("/download/%EB%B3%B4%EA%B3%A0%EC%84%9C.html");
+  });
+
   it.each([
     ["missing visible filename", metadata(), target("")],
     ["different visible filename", metadata(), target("OTHER.md")],
@@ -105,6 +123,48 @@ describe("main-world file validation", () => {
     expect(() => validateEncoding(new Response("<html></html>", { headers: { "content-type": "text/html; charset=utf-8" } }))).toThrow();
     expect(() => validateEncoding(new Response("# title", { headers: { "content-type": "application/octet-stream" } }))).not.toThrow();
     expect(() => validateEncoding(new Response("# title", { headers: { "content-type": "text/markdown; charset=utf-8" } }))).not.toThrow();
+    expect(() => validateEncoding(new Response("<html></html>", { headers: { "content-type": "text/html; charset=utf-8" } }), "html")).not.toThrow();
+    expect(() => validateEncoding(new Response("# title", { headers: { "content-type": "text/plain; charset=utf-8" } }), "html")).toThrow();
+  });
+
+  it("fetches validated HTML as text without triggering a browser download", async () => {
+    const message = document.createElement("div");
+    message.className = "msg_wrap";
+    const card = target("report.html");
+    card.setAttribute("data-wmp-target", "html-target");
+    message.append(card);
+    document.body.append(message);
+    Object.defineProperty(card, "__reactFiber$fixture", {
+      value: { memoizedProps: { message: reactMetadata({
+        fileName: "report.html",
+        fileExtensionName: "report.html",
+        extras: { filename: "report.html", filesize: 32, resourcepath: "/download/report.html" }
+      }) } }
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("<!doctype html><h1>Report</h1>", { headers: { "content-type": "text/html; charset=utf-8" } })
+    );
+    const postMessage = vi.spyOn(window, "postMessage").mockImplementation(() => undefined);
+
+    onBridgeMessage(new MessageEvent("message", {
+      source: window,
+      origin: window.location.origin,
+      data: {
+        namespace: BRIDGE_NAMESPACE,
+        version: BRIDGE_VERSION,
+        kind: "file-content-request",
+        requestId: "html-request",
+        targetId: "html-target"
+      }
+    }));
+
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalled());
+    expect(postMessage.mock.calls.at(-1)?.[0]).toMatchObject({
+      kind: "file-content-success",
+      fileKind: "html",
+      fileName: "report.html",
+      text: "<!doctype html><h1>Report</h1>"
+    });
   });
 
   it("binds the requested card fiber to the official credentialed storage fetch", async () => {

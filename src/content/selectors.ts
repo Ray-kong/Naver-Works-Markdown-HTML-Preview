@@ -18,7 +18,9 @@ export const WORKS_SELECTORS = {
     ".filename",
     "[class*='file_name']",
     "[title$='.md' i]",
-    "[title$='.markdown' i]"
+    "[title$='.markdown' i]",
+    "[title$='.html' i]",
+    "[title$='.htm' i]"
   ].join(",")
 } as const;
 

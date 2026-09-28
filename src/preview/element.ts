@@ -1,7 +1,8 @@
 import { FileBridgeError, requestFileContent, requestFileMetadata } from "../bridge/client";
 import { renderMarkdownFragment } from "../render/markdown";
+import { createSafeHtmlDocument } from "../render/html";
 import { FilePreviewError, isPreviewError, PreviewError } from "../shared/errors";
-import { MAX_FILE_BYTES } from "../shared/limits";
+import { MAX_FILE_BYTES, MAX_HTML_FILE_BYTES } from "../shared/limits";
 import { STRINGS } from "../shared/strings";
 import type { MessagePreviewData } from "../content/extract";
 import { PREVIEW_TAG_NAME } from "../content/selectors";
@@ -10,6 +11,7 @@ import { PREVIEW_STYLES } from "./styles";
 type FileContentResponse = {
   readonly text: string;
   readonly fileName?: string;
+  readonly fileKind: "markdown" | "html";
   readonly cacheKey?: string;
   readonly size?: number;
 };
@@ -29,12 +31,19 @@ const asFileContent = (value: unknown, targetId: string): FileContentResponse =>
     throw new FilePreviewError("INVALID_RESPONSE", "The file bridge returned an invalid response.", targetId);
   }
   const size = "size" in value && typeof value.size === "number" ? value.size : new TextEncoder().encode(value.text).byteLength;
-  if (size > MAX_FILE_BYTES) {
+  const fileKind = "fileKind" in value && (value.fileKind === "markdown" || value.fileKind === "html")
+    ? value.fileKind
+    : undefined;
+  if (!fileKind) {
+    throw new FilePreviewError("INVALID_RESPONSE", "The file bridge returned an invalid file kind.", targetId);
+  }
+  const maxBytes = fileKind === "html" ? MAX_HTML_FILE_BYTES : MAX_FILE_BYTES;
+  if (size > maxBytes) {
     throw new FilePreviewError("FILE_TOO_LARGE", "The file exceeds the preview size limit.", targetId);
   }
   const fileName = "fileName" in value && typeof value.fileName === "string" ? value.fileName : undefined;
   const cacheKey = "cacheKey" in value && typeof value.cacheKey === "string" ? value.cacheKey : undefined;
-  return { text: value.text, fileName, cacheKey, size };
+  return { text: value.text, fileName, fileKind, cacheKey, size };
 };
 
 const errorLabel = (error: unknown): string => {
@@ -106,6 +115,22 @@ export const createPreviewElement = (): WorksMarkdownPreviewElement => {
     }
   };
 
+  const appendHtml = (source: string, fileName: string): void => {
+    const documentRoot = document.createElement("section");
+    documentRoot.className = "document html-document";
+    const label = document.createElement("p");
+    label.className = "filename";
+    label.textContent = fileName;
+    const frame = document.createElement("iframe");
+    frame.className = "html-frame";
+    frame.title = `${fileName} HTML preview`;
+    frame.setAttribute("sandbox", "allow-popups allow-popups-to-escape-sandbox");
+    frame.referrerPolicy = "no-referrer";
+    frame.srcdoc = createSafeHtmlDocument(source);
+    documentRoot.append(label, frame);
+    panel.append(documentRoot);
+  };
+
   const render = async (previewData: MessagePreviewData): Promise<void> => {
     try {
       if (previewData.messageText) {
@@ -121,14 +146,18 @@ export const createPreviewElement = (): WorksMarkdownPreviewElement => {
       loading.textContent = `${file.fileName}: ${STRINGS.loading}`;
       panel.append(loading);
       try {
-        const response: unknown = await requestFileContent(file.targetId);
-        const { text, fileName, cacheKey } = asFileContent(response, file.targetId);
+        const response: unknown = await requestFileContent(file.targetId, file.fileKind);
+        const { text, fileName, fileKind, cacheKey } = asFileContent(response, file.targetId);
         loading.remove();
-        await appendMarkdown(
-          text,
-          `file:${instanceKey}:${cacheKey ?? file.targetId}`,
-          fileName ?? file.fileName
-        );
+        const resolvedName = fileName ?? file.fileName;
+        if (fileKind === "html") appendHtml(text, resolvedName);
+        else {
+          await appendMarkdown(
+            text,
+            `file:${instanceKey}:${cacheKey ?? file.targetId}`,
+            resolvedName
+          );
+        }
       } catch (error) {
         loading.remove();
         appendError(error);

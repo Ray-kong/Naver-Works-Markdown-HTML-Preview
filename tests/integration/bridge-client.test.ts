@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BRIDGE_NAMESPACE, BRIDGE_VERSION, type FileContentRequest } from "../../src/bridge/protocol";
+import { HTML_FILE_TIMEOUT_MS } from "../../src/shared/limits";
 
 const success = (requestId: string, cacheKey = "channel:message") => ({
   namespace: BRIDGE_NAMESPACE,
@@ -8,6 +9,7 @@ const success = (requestId: string, cacheKey = "channel:message") => ({
   requestId,
   text: "# README",
   fileName: "README.md",
+  fileKind: "markdown" as const,
   cacheKey
 });
 
@@ -32,6 +34,7 @@ describe("file bridge client integration", () => {
     await expect(pending).resolves.toEqual({
       text: "# README",
       fileName: "README.md",
+      fileKind: "markdown",
       cacheKey: "channel:message"
     });
   });
@@ -48,6 +51,23 @@ describe("file bridge client integration", () => {
 
     expect(second.cacheKey).toBe("channel:cached-message");
     expect(postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows the larger HTML transfer window without extending Markdown requests", async () => {
+    const postMessage = vi.spyOn(window, "postMessage").mockImplementation(() => undefined);
+    const timeout = vi.spyOn(window, "setTimeout");
+    const { requestFileContent } = await import("../../src/bridge/client");
+    const pending = requestFileContent("target-html-timeout", "html");
+    const request = postMessage.mock.calls[0]?.[0] as FileContentRequest;
+
+    expect(timeout).toHaveBeenCalledWith(expect.any(Function), HTML_FILE_TIMEOUT_MS);
+    dispatchResponse({
+      ...success(request.requestId),
+      text: "<!doctype html><h1>Report</h1>",
+      fileName: "report.html",
+      fileKind: "html"
+    });
+    await expect(pending).resolves.toMatchObject({ fileKind: "html", fileName: "report.html" });
   });
 
   it("rejects a correlated bridge error with its typed code", async () => {

@@ -1,6 +1,8 @@
 export const MAX_MESSAGE_CHARACTERS = 250_000;
 export const MAX_FILE_BYTES = 1_048_576;
+export const MAX_HTML_FILE_BYTES = 5_242_880;
 export const FILE_TIMEOUT_MS = 2_000;
+export const HTML_FILE_TIMEOUT_MS = 20_000;
 export const MERMAID_MAX_TEXT_SIZE = 50_000;
 export const MERMAID_MAX_EDGES = 500;
 

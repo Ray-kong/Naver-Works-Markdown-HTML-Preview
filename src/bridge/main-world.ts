@@ -1,4 +1,4 @@
-import { FILE_TIMEOUT_MS, MAX_FILE_BYTES } from "../shared/limits";
+import { FILE_TIMEOUT_MS, HTML_FILE_TIMEOUT_MS, MAX_FILE_BYTES, MAX_HTML_FILE_BYTES } from "../shared/limits";
 import {
   BRIDGE_NAMESPACE,
   BRIDGE_VERSION,
@@ -8,6 +8,7 @@ import {
   type FileContentError,
   type FileContentRequest,
   type FileContentSuccess,
+  type FileKind,
   type FileMetadataError,
   type FileMetadataRequest,
   type FileMetadataSuccess
@@ -33,13 +34,24 @@ function extensionOf(value: string): string | undefined {
   return match?.[1]?.toLowerCase();
 }
 
-function markdownExtension(value: string): boolean {
+function fileKindFromExtension(value: string): FileKind | undefined {
   const extension = value.replace(/^\./, "").toLowerCase();
-  return extension === "md" || extension === "markdown";
+  if (extension === "md" || extension === "markdown") return "markdown";
+  if (extension === "html" || extension === "htm") return "html";
+  return undefined;
 }
 
+const maxBytesForKind = (fileKind: FileKind): number =>
+  fileKind === "html" ? MAX_HTML_FILE_BYTES : MAX_FILE_BYTES;
+
 function displayedFileName(metadata: FileMessageMetadata): string {
-  if (metadata.extras.filename) return metadata.extras.filename;
+  if (metadata.extras.filename) {
+    try {
+      return decodeURIComponent(metadata.extras.filename);
+    } catch {
+      return metadata.extras.filename;
+    }
+  }
   if (extensionOf(metadata.fileName)) return metadata.fileName;
   const extension = extensionOf(metadata.fileExtensionName) ?? metadata.fileExtensionName.replace(/^\./, "");
   return `${metadata.fileName}.${extension}`;
@@ -49,11 +61,8 @@ function normalizedFileName(value: string): string {
   return value.trim().normalize("NFC");
 }
 
-export function validateMetadata(metadata: FileMessageMetadata, target: Element, allowExpired = false): { fileName: string; url: URL } {
+export function validateMetadata(metadata: FileMessageMetadata, target: Element, allowExpired = false): { fileName: string; fileKind: FileKind; url: URL } {
   if (metadata.isExpiredFile && !allowExpired) fail("expired-file");
-  if (metadata.extras.filesize !== undefined && metadata.extras.filesize > MAX_FILE_BYTES) {
-    fail("file-too-large");
-  }
 
   const fileName = displayedFileName(metadata);
   const metadataExtension = extensionOf(metadata.fileExtensionName) ?? metadata.fileExtensionName.replace(/^\./, "").toLowerCase();
@@ -61,10 +70,14 @@ export function validateMetadata(metadata: FileMessageMetadata, target: Element,
     extensionOf(fileName),
     metadataExtension
   ].filter((value): value is string => Boolean(value));
-  if (declaredExtensions.length === 0 || declaredExtensions.some((value) => !markdownExtension(value))) {
-    fail("unsupported-file");
-  }
+  const fileKinds = declaredExtensions.map(fileKindFromExtension);
+  if (declaredExtensions.length === 0 || fileKinds.some((value) => !value)) fail("unsupported-file");
   if (new Set(declaredExtensions).size !== 1) fail("invalid-resource");
+  const fileKind = fileKinds[0];
+  if (!fileKind || fileKinds.some((value) => value !== fileKind)) fail("invalid-resource");
+  if (metadata.extras.filesize !== undefined && metadata.extras.filesize > maxBytesForKind(fileKind)) {
+    fail("file-too-large");
+  }
 
   const resourcePath = metadata.extras.resourcepath;
   if (!resourcePath) fail("invalid-resource");
@@ -98,12 +111,13 @@ export function validateMetadata(metadata: FileMessageMetadata, target: Element,
   url.searchParams.set("ocn", "1");
   url.searchParams.set("serviceId", "works");
   url.searchParams.set("messageNo", metadata.messageNo);
-  return { fileName, url };
+  return { fileName, fileKind, url };
 }
 
 function findValidatedMetadata(targetId: string, allowExpired = false): {
   metadata: FileMessageMetadata;
   fileName: string;
+  fileKind: FileKind;
   url: URL;
 } {
   const target = findTarget(targetId);
@@ -113,18 +127,20 @@ function findValidatedMetadata(targetId: string, allowExpired = false): {
   return { metadata, ...validateMetadata(metadata, target, allowExpired) };
 }
 
-export function validateEncoding(response: Response): void {
+export function validateEncoding(response: Response, fileKind: FileKind = "markdown"): void {
   const contentType = response.headers.get("content-type");
   if (!contentType) fail("unsupported-file");
   const mimeType = contentType.split(";", 1)[0]?.trim().toLowerCase();
-  if (!mimeType || mimeType === "text/html" || (!mimeType.startsWith("text/") && mimeType !== "application/markdown" && mimeType !== "application/x-markdown" && mimeType !== "application/octet-stream")) {
-    fail("unsupported-file");
-  }
+  if (!mimeType) fail("unsupported-file");
+  const supported = fileKind === "html"
+    ? mimeType === "text/html" || mimeType === "application/xhtml+xml"
+    : mimeType !== "text/html" && (mimeType.startsWith("text/") || mimeType === "application/markdown" || mimeType === "application/x-markdown" || mimeType === "application/octet-stream");
+  if (!supported) fail("unsupported-file");
   const charset = /charset\s*=\s*["']?([^;\s"']+)/i.exec(contentType)?.[1]?.toLowerCase();
   if (charset && charset !== "utf-8" && charset !== "utf8") fail("unsupported-encoding");
 
   const contentLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > MAX_FILE_BYTES) fail("file-too-large");
+  if (Number.isFinite(contentLength) && contentLength > maxBytesForKind(fileKind)) fail("file-too-large");
 }
 
 function rejectHtmlDocument(value: string): void {
@@ -152,18 +168,19 @@ function rejectHtmlDocument(value: string): void {
   }
 }
 
-async function readBoundedUtf8(response: Response): Promise<string> {
-  validateEncoding(response);
+async function readBoundedUtf8(response: Response, fileKind: FileKind): Promise<string> {
+  const maxBytes = maxBytesForKind(fileKind);
+  validateEncoding(response, fileKind);
   if (!response.body) {
     const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > MAX_FILE_BYTES) fail("file-too-large");
+    if (bytes.byteLength > maxBytes) fail("file-too-large");
     let text: string;
     try {
       text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     } catch {
       fail("unsupported-encoding");
     }
-    rejectHtmlDocument(text);
+    if (fileKind === "markdown") rejectHtmlDocument(text);
     return text;
   }
 
@@ -175,7 +192,7 @@ async function readBoundedUtf8(response: Response): Promise<string> {
     const { done, value } = await reader.read();
     if (done) break;
     bytesRead += value.byteLength;
-    if (bytesRead > MAX_FILE_BYTES) {
+    if (bytesRead > maxBytes) {
       await reader.cancel();
       fail("file-too-large");
     }
@@ -191,7 +208,7 @@ async function readBoundedUtf8(response: Response): Promise<string> {
     fail("unsupported-encoding");
   }
   const text = chunks.join("");
-  rejectHtmlDocument(text);
+  if (fileKind === "markdown") rejectHtmlDocument(text);
   return text;
 }
 
@@ -202,10 +219,11 @@ function findTarget(targetId: string): Element | undefined {
 }
 
 async function loadFile(request: FileContentRequest): Promise<Omit<FileContentSuccess, "namespace" | "version" | "kind" | "requestId">> {
-  const { metadata, fileName, url } = findValidatedMetadata(request.targetId);
+  const { metadata, fileName, fileKind, url } = findValidatedMetadata(request.targetId);
 
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), FILE_TIMEOUT_MS);
+  const timeoutMs = fileKind === "html" ? HTML_FILE_TIMEOUT_MS : FILE_TIMEOUT_MS;
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       credentials: "include",
@@ -213,8 +231,8 @@ async function loadFile(request: FileContentRequest): Promise<Omit<FileContentSu
       signal: controller.signal
     });
     if (!response.ok) fail("fetch-failed");
-    const text = await readBoundedUtf8(response);
-    return { text, fileName, cacheKey: `${metadata.channelNo}:${metadata.messageNo}` };
+    const text = await readBoundedUtf8(response, fileKind);
+    return { text, fileName, fileKind, cacheKey: `${metadata.channelNo}:${metadata.messageNo}` };
   } catch (error) {
     if (error instanceof BridgeFailure) throw error;
     if (controller.signal.aborted) fail("timeout");

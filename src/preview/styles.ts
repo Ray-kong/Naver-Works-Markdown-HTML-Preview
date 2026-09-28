@@ -10,6 +10,8 @@ button:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
 .panel[hidden] { display:none; }
 .document + .document { border-top:1px solid color-mix(in srgb,currentColor 20%,transparent); margin-top:14px; padding-top:14px; }
 .filename { color:inherit; font-size:12px; font-weight:600; margin:0 0 8px; opacity:.78; }
+.html-document { width:100%; }
+.html-frame { background:#fff; border:1px solid color-mix(in srgb,currentColor 16%,transparent); border-radius:6px; box-sizing:border-box; display:block; height:min(620px,62vh); width:100%; }
 .loading,.error { color:inherit; margin:0; opacity:.78; }
 .error { color:#d92d20; opacity:1; }
 h1,h2,h3,h4,h5,h6 { line-height:1.3; margin:1em 0 .45em; }

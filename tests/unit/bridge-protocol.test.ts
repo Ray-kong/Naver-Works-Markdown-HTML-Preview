@@ -45,10 +45,12 @@ describe("file bridge protocol", () => {
       requestId: "correlation-1",
       text: "# README",
       fileName: "README.md",
+      fileKind: "markdown",
       cacheKey: "channel:message"
     };
     expect(isFileContentResponse(response)).toBe(true);
     expect(isFileContentResponse({ ...response, text: undefined })).toBe(false);
+    expect(isFileContentResponse({ ...response, fileKind: "executable" })).toBe(false);
   });
 
   it("allows only known error codes", () => {

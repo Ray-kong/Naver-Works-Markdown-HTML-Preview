@@ -1,5 +1,8 @@
 export const BRIDGE_NAMESPACE = "works-markdown-preview/file-bridge" as const;
-export const BRIDGE_VERSION = 1 as const;
+export const BRIDGE_VERSION = 2 as const;
+
+export const FILE_KINDS = ["markdown", "html"] as const;
+export type FileKind = (typeof FILE_KINDS)[number];
 
 export const BRIDGE_ERROR_CODES = [
   "invalid-request",
@@ -39,6 +42,7 @@ export interface FileContentSuccess {
   requestId: string;
   text: string;
   fileName: string;
+  fileKind: FileKind;
   cacheKey: string;
 }
 
@@ -105,6 +109,8 @@ export function isFileContentResponse(value: unknown): value is FileContentRespo
       typeof value.text === "string" &&
       typeof value.fileName === "string" &&
       value.fileName.length > 0 &&
+      typeof value.fileKind === "string" &&
+      (FILE_KINDS as readonly string[]).includes(value.fileKind) &&
       typeof value.cacheKey === "string" &&
       value.cacheKey.length > 0
     );
